@@ -161,3 +161,45 @@ flowchart TD
 - **Shared libraries**: `EventBusRabbitMQ`, `IntegrationEventLogEF`, `eShop.ServiceDefaults` are used by other services, so they will NOT be deleted
 - **Database**: `webhooksdb` is only used by Webhooks.API; removing it from AppHost is sufficient (no data migration needed since app is dead)
 - **Build failure**: If any file references webhooks, the build will fail immediately, making issues easy to catch
+
+---
+
+## Additional Cleanup (2026-01-21)
+
+После основного удаления была выполнена дополнительная очистка упоминаний:
+
+### Build Scripts Cleanup
+
+**Файл: `build/acr-build/queue-all.ps1`**
+
+- ✅ Удалено: `mobileshoppingagg` (Mobile BFF)
+- ✅ Обновлены пути к Dockerfile'ам под текущую структуру проекта
+- ✅ Удалены устаревшие компоненты (WebSPA, WebMVC, WebStatus, OcelotApiGw, SignalrHub)
+
+**Файл: `build/multiarch-manifests/create-manifests.ps1`**
+
+- ✅ Удалены все устаревшие сервисы из списка
+- ✅ Оставлены только актуальные компоненты текущей Aspire архитектуры
+
+### Identity Configuration Cleanup
+
+**Файл: `src/Identity.API/Configuration/Config.cs`**
+
+- ✅ Удалён scope `"webshoppingagg"` из `AllowedScopes` клиента "webapp"
+
+### Verification
+
+Выполнена проверка на отсутствие упоминаний:
+
+```bash
+grep -r "WebSPA|WebMVC|WebStatus|OcelotApiGw|SignalrHub|webshoppingagg|mobileshoppingagg|webhook|WebhookClient|Webhooks\.API|mobile-bff" -i
+# Результат: No matches found ✅
+```
+
+### Документация
+
+Создан файл: `.cursor/docs/cleanup/removed-legacy-components.md`
+
+- Детальное описание всех удалённых компонентов
+- Текущая архитектура проекта
+- Список изменённых файлов

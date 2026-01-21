@@ -68,8 +68,7 @@
                         IdentityServerConstants.StandardScopes.Profile,
                         IdentityServerConstants.StandardScopes.OfflineAccess,
                         "orders",
-                        "basket",
-                        "webshoppingagg"
+                        "basket"
                     },
                     AccessTokenLifetime = 60*60*2, // 2 hours
                     IdentityTokenLifetime= 60*60*2 // 2 hours

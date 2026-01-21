@@ -9,19 +9,13 @@ Param(
 $gitContext = "https://github.com/$gitUser/$repoName"
 
 $services = @( 
-    @{ Name="eshopbasket"; Image="eshop/basket.api"; File="src/Services/Basket/Basket.API/Dockerfile" },
-    @{ Name="eshopcatalog"; Image="eshop/catalog.api"; File="src/Services/Catalog/Catalog.API/Dockerfile" },
-    @{ Name="eshopidentity"; Image="eshop/identity.api"; File="src/Services/Identity/Identity.API/Dockerfile" },
-    @{ Name="eshopordering"; Image="eshop/ordering.api"; File="src/Services/Ordering/Ordering.API/Dockerfile" },
-	@{ Name="eshoporderingbg"; Image="eshop/orderprocessor"; File="src/Services/Ordering/OrderProcessor/Dockerfile" },
-    @{ Name="eshopwebspa"; Image="eshop/webspa"; File="src/Web/WebSPA/Dockerfile" },
-    @{ Name="eshopwebmvc"; Image="eshop/webmvc"; File="src/Web/WebMVC/Dockerfile" },
-    @{ Name="eshopwebstatus"; Image="eshop/webstatus"; File="src/Web/WebStatus/Dockerfile" },
-    @{ Name="eshoppayment"; Image="eshop/paymentprocessor"; File="src/Services/Payment/PaymentProcessor/Dockerfile" },
-    @{ Name="eshopocelotapigw"; Image="eshop/ocelotapigw"; File="src/ApiGateways/ApiGw-Base/Dockerfile" },
-    @{ Name="eshopmobileshoppingagg"; Image="eshop/mobileshoppingagg"; File="src/ApiGateways/Mobile.Bff.Shopping/aggregator/Dockerfile" },
-    @{ Name="eshopwebshoppingagg"; Image="eshop/webshoppingagg"; File="src/ApiGateways/Web.Bff.Shopping/aggregator/Dockerfile" },
-    @{ Name="eshoporderingsignalrhub"; Image="eshop/ordering.signalrhub"; File="src/Services/Ordering/Ordering.SignalrHub/Dockerfile" }
+    @{ Name="eshopbasket"; Image="eshop/basket.api"; File="src/Basket.API/Dockerfile" },
+    @{ Name="eshopcatalog"; Image="eshop/catalog.api"; File="src/Catalog.API/Dockerfile" },
+    @{ Name="eshopidentity"; Image="eshop/identity.api"; File="src/Identity.API/Dockerfile" },
+    @{ Name="eshopordering"; Image="eshop/ordering.api"; File="src/Ordering.API/Dockerfile" },
+    @{ Name="eshoporderprocessor"; Image="eshop/orderprocessor"; File="src/OrderProcessor/Dockerfile" },
+    @{ Name="eshoppayment"; Image="eshop/paymentprocessor"; File="src/PaymentProcessor/Dockerfile" },
+    @{ Name="eshopwebapp"; Image="eshop/webapp"; File="src/WebApp/Dockerfile" }
 )
 
 $services |% {
