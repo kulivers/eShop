@@ -1,0 +1,128 @@
+# Playwright MCP Usage Guidelines
+
+## Overview
+This project has Playwright MCP (Model Context Protocol) configured. Use it for browser automation and testing instead of taking screenshots.
+
+## When to Use Playwright MCP
+
+### ALWAYS use Playwright MCP for:
+1. **Testing the application** - Navigate to localhost and interact with the UI
+2. **Form validation** - Fill forms and verify behavior
+3. **UI verification** - Check that elements are visible and interactive
+4. **End-to-end workflows** - Test complete user journeys
+5. **Visual inspection** - Use `browser_snapshot` instead of screenshots for better accessibility data
+
+### Available Tools
+
+#### Core Navigation
+- `browser_navigate` - Open URLs (e.g., http://localhost:3000)
+- `browser_navigate_back` - Go back to previous page
+- `browser_snapshot` - Get accessibility tree (PREFERRED over screenshots)
+- `browser_take_screenshot` - Only for visual inspection when needed
+
+#### Interactions
+- `browser_click` - Click elements using refs from snapshots
+- `browser_type` - Type text into inputs
+- `browser_fill_form` - Fill multiple form fields at once
+- `browser_select_option` - Select dropdown options
+- `browser_hover` - Hover over elements
+- `browser_press_key` - Press keyboard keys
+
+#### Verification
+- `browser_console_messages` - Check for console errors
+- `browser_network_requests` - Inspect network activity
+- `browser_verify_element_visible` - Assert element visibility
+- `browser_verify_text_visible` - Assert text presence
+- `browser_verify_value` - Assert form values
+
+#### Advanced
+- `browser_tabs` - Manage multiple tabs
+- `browser_evaluate` - Execute JavaScript on page
+- `browser_pdf_save` - Save page as PDF
+
+## Best Practices
+
+### 1. Start with Snapshot, Not Screenshot
+```
+❌ BAD: Take screenshot to see what's on page
+✅ GOOD: Use browser_snapshot to get structured accessibility data
+```
+
+### 2. Use Accessibility Tree for Interactions
+The snapshot provides refs that you can use directly:
+```
+- button "Login" [ref: abc123]
+  → Use browser_click with ref="abc123"
+```
+
+### 3. Test After Making Changes
+When implementing features:
+1. Make code changes
+2. Navigate to localhost with Playwright
+3. Interact with the feature
+4. Verify it works as expected
+
+### 4. Check Console for Errors
+Always check `browser_console_messages` after interactions to catch JavaScript errors
+
+### 5. Verify Network Requests
+Use `browser_network_requests` to ensure API calls are made correctly
+
+## Example Workflow
+
+```typescript
+// 1. Navigate to app
+browser_navigate("http://localhost:3000")
+
+// 2. Get page structure
+browser_snapshot()
+
+// 3. Fill login form
+browser_fill_form([
+  { name: "email", ref: "email-input-ref", type: "textbox", value: "test@example.com" },
+  { name: "password", ref: "password-input-ref", type: "textbox", value: "password123" }
+])
+
+// 4. Click submit
+browser_click({ element: "Login button", ref: "login-btn-ref" })
+
+// 5. Verify success
+browser_verify_text_visible({ text: "Welcome" })
+
+// 6. Check for errors
+browser_console_messages({ onlyErrors: true })
+```
+
+## Configuration
+
+Current setup:
+- Browser: Chrome
+- Capabilities: vision, pdf, tabs
+- Trace saving: Enabled
+- Video recording: 1280x720
+
+## DO NOT
+
+- ❌ Don't use screenshots for automation (use snapshots)
+- ❌ Don't guess element selectors (use refs from snapshots)
+- ❌ Don't skip verification after changes
+- ❌ Don't forget to check console errors
+
+## DO
+
+- ✅ Use browser_snapshot for page structure
+- ✅ Use refs from snapshots for interactions
+- ✅ Verify changes with Playwright tools
+- ✅ Check console and network after interactions
+- ✅ Test the actual running application
+
+## Integration with Development
+
+When user asks to:
+- "Test this feature" → Use Playwright to navigate and interact
+- "Check if it works" → Use Playwright to verify
+- "See the page" → Use browser_snapshot (not screenshot)
+- "Fill the form" → Use browser_fill_form
+- "Click the button" → Use browser_click with proper ref
+
+This ensures we're testing the real application behavior, not just looking at static images.

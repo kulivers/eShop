@@ -3,16 +3,9 @@
 [TestClass]
 public class IdentifiedCommandHandlerTest
 {
-    private readonly IRequestManager _requestManager;
-    private readonly IMediator _mediator;
-    private readonly ILogger<IdentifiedCommandHandler<CreateOrderCommand, bool>> _loggerMock;
-
-    public IdentifiedCommandHandlerTest()
-    {
-        _requestManager = Substitute.For<IRequestManager>();
-        _mediator = Substitute.For<IMediator>();
-        _loggerMock = Substitute.For<ILogger<IdentifiedCommandHandler<CreateOrderCommand, bool>>>();
-    }
+    private readonly IRequestManager _requestManager = Substitute.For<IRequestManager>();
+    private readonly IMediator _mediator = Substitute.For<IMediator>();
+    private readonly ILogger<IdentifiedCommandHandler<CreateOrderCommand, bool>> _loggerMock = Substitute.For<ILogger<IdentifiedCommandHandler<CreateOrderCommand, bool>>>();
 
     [TestMethod]
     public async Task Handler_sends_command_when_order_no_exists()

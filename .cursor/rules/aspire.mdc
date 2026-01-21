@@ -1,0 +1,553 @@
+---
+description: This file provides comprehensive guidelines for developing .NET Aspire applications, covering architecture, resource management, migrations, health checks, metrics, service discovery, and testing.
+globs: *.cs,AppHost.cs,*.csproj
+alwaysApply: false
+---
+
+Role Definition:
+ - .NET Aspire Expert
+ - Distributed Systems Architect
+ - Cloud-Native Development Specialist
+
+General:
+  Description: >
+    .NET Aspire is a cloud-ready stack for building observable, production-ready,
+    distributed applications. Follow these guidelines to ensure consistent architecture,
+    proper resource management, and best practices for Aspire applications.
+  Requirements:
+    - Use AppHost as the single source of truth for application topology
+    - Define resources explicitly with proper dependencies
+    - Implement health checks for all services
+    - Configure OpenTelemetry for observability
+    - Use ServiceDefaults for consistent configuration
+    - Follow dependency ordering with WaitFor patterns
+    - Implement proper migration strategies
+
+Architecture:
+  Project Structure:
+    - Follow the structure from aspire-with-javascript sample:
+      ```
+      SolutionName/
+      ├── SolutionName.AppHost/
+      │   ├── AppHost.cs
+      │   ├── SolutionName.AppHost.csproj
+      │   └── Properties/
+      │       └── launchSettings.json
+      ├── SolutionName.ServiceDefaults/
+      │   ├── Extensions.cs
+      │   └── SolutionName.ServiceDefaults.csproj
+      ├── SolutionName.ApiService/
+      │   ├── Program.cs
+      │   └── SolutionName.ApiService.csproj
+      ├── SolutionName.Web/
+      │   ├── Program.cs
+      │   └── SolutionName.Web.csproj
+      └── SolutionName.sln
+      ```
+    - AppHost project: Orchestrates all resources and services
+    - ServiceDefaults project: Shared configuration and extensions
+    - Service projects: Individual application services
+
+  AppHost Configuration:
+    - Always start with DistributedApplication.CreateBuilder:
+      ```csharp
+      var builder = DistributedApplication.CreateBuilder(args);
+      ```
+    - Define resources in dependency order:
+      ```csharp
+      // Infrastructure resources first
+      var sqlserver = builder.AddSqlServer("sqlserver")
+          .WithDataVolume()
+          .WithLifetime(ContainerLifetime.Persistent);
+      
+      var db1 = sqlserver.AddDatabase("db1");
+      
+      // Migration service before dependent services
+      var migrationService = builder.AddProject<Projects.DatabaseMigrations_MigrationService>("migration")
+          .WithReference(db1)
+          .WaitFor(db1);
+      
+      // Application services after migrations
+      builder.AddProject<Projects.DatabaseMigrations_ApiService>("api")
+          .WithReference(db1)
+          .WaitForCompletion(migrationService);
+      ```
+    - Use WithReference for resource dependencies:
+      ```csharp
+      var apiService = builder.AddProject<Projects.MyApp_ApiService>("apiservice")
+          .WithReference(cache)
+          .WithReference(db1);
+      ```
+    - Use WaitFor for startup ordering:
+      ```csharp
+      builder.AddProject<Projects.MyApp_Web>("webfrontend")
+          .WithReference(apiService)
+          .WaitFor(apiService)
+          .WaitFor(cache);
+      ```
+    - Always call Build().Run() at the end:
+      ```csharp
+      builder.Build().Run();
+      ```
+
+  Resource Types:
+    - Projects: Use AddProject<T> for .NET projects
+      ```csharp
+      var apiService = builder.AddProject<Projects.MyApp_ApiService>("apiservice");
+      ```
+    - Containers: Use AddContainer for Docker containers
+      ```csharp
+      var redis = builder.AddRedis("cache");
+      var postgres = builder.AddPostgres("postgres");
+      ```
+    - Databases: Add databases to database servers
+      ```csharp
+      var sqlserver = builder.AddSqlServer("sqlserver");
+      var db1 = sqlserver.AddDatabase("db1");
+      ```
+    - JavaScript Apps: Use AddJavaScriptApp for Node.js/React/Vue apps
+      ```csharp
+      builder.AddJavaScriptApp("react", "../MyApp.React", runScriptName: "start")
+          .WithReference(weatherApi)
+          .WaitFor(weatherApi)
+          .WithHttpEndpoint(env: "PORT")
+          .WithExternalHttpEndpoints();
+      ```
+
+ServiceDefaults:
+  - Create a ServiceDefaults project for shared configuration:
+    ```csharp
+    namespace Microsoft.Extensions.Hosting;
+    
+    public static class Extensions
+    {
+        private const string HealthEndpointPath = "/health";
+        private const string AlivenessEndpointPath = "/alive";
+    
+        public static IHostApplicationBuilder AddServiceDefaults(this IHostApplicationBuilder builder)
+        {
+            builder.ConfigureOpenTelemetry();
+            builder.AddDefaultHealthChecks();
+            builder.Services.AddServiceDiscovery();
+    
+            builder.Services.ConfigureHttpClientDefaults(http =>
+            {
+                // Turn on resilience by default
+                http.AddStandardResilienceHandler();
+                // Turn on service discovery by default
+                http.AddServiceDiscovery();
+            });
+    
+            return builder;
+        }
+    
+        public static IHostApplicationBuilder ConfigureOpenTelemetry(this IHostApplicationBuilder builder)
+        {
+            builder.Logging.AddOpenTelemetry(logging =>
+            {
+                logging.IncludeFormattedMessage = true;
+                logging.IncludeScopes = true;
+            });
+    
+            builder.Services.AddOpenTelemetry()
+                .WithMetrics(metrics =>
+                {
+                    metrics.AddAspNetCoreInstrumentation()
+                           .AddHttpClientInstrumentation()
+                           .AddRuntimeInstrumentation();
+                })
+                .WithTracing(tracing =>
+                {
+                    tracing
+                        .AddSource(builder.Environment.ApplicationName)
+                        .AddAspNetCoreInstrumentation(tracing =>
+                            tracing.Filter = httpContext =>
+                                !(httpContext.Request.Path.StartsWithSegments(HealthEndpointPath)
+                                  || httpContext.Request.Path.StartsWithSegments(AlivenessEndpointPath))
+                        )
+                        .AddHttpClientInstrumentation();
+                });
+    
+            builder.AddOpenTelemetryExporters();
+            return builder;
+        }
+    
+        private static IHostApplicationBuilder AddOpenTelemetryExporters(this IHostApplicationBuilder builder)
+        {
+            var useOtlpExporter = !string.IsNullOrWhiteSpace(
+                builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
+    
+            if (useOtlpExporter)
+            {
+                builder.Services.AddOpenTelemetry().UseOtlpExporter();
+            }
+    
+            return builder;
+        }
+    
+        public static IHostApplicationBuilder AddDefaultHealthChecks(this IHostApplicationBuilder builder)
+        {
+            builder.Services.AddHealthChecks()
+                // Add a default liveness check to ensure app is responsive
+                .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"]);
+    
+            return builder;
+        }
+    
+        public static WebApplication MapDefaultEndpoints(this WebApplication app)
+        {
+            // Adding health checks endpoints to applications in non-development environments
+            // has security implications. See https://aka.ms/dotnet/aspire/healthchecks
+            if (app.Environment.IsDevelopment())
+            {
+                // All health checks must pass for app to be considered ready
+                app.MapHealthChecks(HealthEndpointPath);
+    
+                // Only health checks tagged with "live" must pass for app to be considered alive
+                app.MapHealthChecks(AlivenessEndpointPath, new HealthCheckOptions
+                {
+                    Predicate = r => r.Tags.Contains("live")
+                });
+            }
+    
+            return app;
+        }
+    }
+    ```
+  - Always call AddServiceDefaults in service Program.cs:
+    ```csharp
+    var builder = WebApplication.CreateBuilder(args);
+    builder.AddServiceDefaults();
+    ```
+  - Always call MapDefaultEndpoints in service Program.cs:
+    ```csharp
+    var app = builder.Build();
+    app.MapDefaultEndpoints();
+    app.Run();
+    ```
+
+Database Migrations:
+  - Follow the database-migrations sample pattern:
+    - Create a separate MigrationService project:
+      ```csharp
+      var migrationService = builder.AddProject<Projects.DatabaseMigrations_MigrationService>("migration")
+          .WithReference(db1)
+          .WaitFor(db1);
+      ```
+    - Use BackgroundService for migration execution:
+      ```csharp
+      public class ApiDbInitializer(
+          IServiceProvider serviceProvider,
+          IHostEnvironment hostEnvironment,
+          IHostApplicationLifetime hostApplicationLifetime) : BackgroundService
+      {
+          private readonly ActivitySource _activitySource = new(hostEnvironment.ApplicationName);
+      
+          protected override async Task ExecuteAsync(CancellationToken cancellationToken)
+          {
+              using var activity = _activitySource.StartActivity(
+                  hostEnvironment.ApplicationName, ActivityKind.Client);
+      
+              try
+              {
+                  using var scope = serviceProvider.CreateScope();
+                  var dbContext = scope.ServiceProvider.GetRequiredService<MyDb1Context>();
+                  await RunMigrationAsync(dbContext, cancellationToken);
+              }
+              catch (Exception ex)
+              {
+                  activity?.AddException(ex);
+                  throw;
+              }
+      
+              hostApplicationLifetime.StopApplication();
+          }
+      
+          private static async Task RunMigrationAsync(
+              MyDb1Context dbContext, 
+              CancellationToken cancellationToken)
+          {
+              var strategy = dbContext.Database.CreateExecutionStrategy();
+              await strategy.ExecuteAsync(async () =>
+              {
+                  await dbContext.Database.MigrateAsync(cancellationToken);
+              });
+          }
+      }
+      ```
+    - Configure DbContext in MigrationService:
+      ```csharp
+      builder.Services.AddHostedService<ApiDbInitializer>();
+      builder.AddServiceDefaults();
+      
+      builder.Services.AddDbContextPool<MyDb1Context>(options =>
+          options.UseSqlServer(
+              builder.Configuration.GetConnectionString("db1"), 
+              sqlOptions => sqlOptions.MigrationsAssembly("DatabaseMigrations.MigrationService")
+          ));
+      builder.EnrichSqlServerDbContext<MyDb1Context>();
+      ```
+    - Use WaitForCompletion for dependent services:
+      ```csharp
+      builder.AddProject<Projects.DatabaseMigrations_ApiService>("api")
+          .WithReference(db1)
+          .WaitForCompletion(migrationService);
+      ```
+
+Health Checks:
+  - Follow the health-checks-ui sample pattern:
+    - Configure health checks in AppHost:
+      ```csharp
+      var apiService = builder.AddProject<Projects.HealthChecksUI_ApiService>("apiservice")
+          .WithHttpHealthCheck("/health")
+          .WithHttpProbe(ProbeType.Liveness, "/alive")
+          .WithFriendlyUrls(displayText: "API");
+      ```
+    - Add health checks to services:
+      ```csharp
+      builder.Services.AddHealthChecks()
+          .AddCheck("self", () => HealthCheckResult.Healthy(), ["live"])
+          .AddCheck("database", () => 
+          {
+              // Check database connectivity
+              return HealthCheckResult.Healthy();
+          }, ["ready"]);
+      ```
+    - Use WithHttpProbe for liveness checks:
+      ```csharp
+      .WithHttpProbe(ProbeType.Liveness, "/alive")
+      ```
+    - Use WithHttpHealthCheck for readiness checks:
+      ```csharp
+      .WithHttpHealthCheck("/health")
+      ```
+    - Configure HealthChecksUI for monitoring:
+      ```csharp
+      var healthChecksUI = builder.AddHealthChecksUI("healthchecksui")
+          .WithReference(apiService)
+          .WithReference(webFrontend)
+          .WithFriendlyUrls("HealthChecksUI Dashboard", "http")
+          .WithHttpProbe(ProbeType.Liveness, "/")
+          .WithExternalHttpEndpoints();
+      ```
+
+Metrics and Observability:
+  - Follow the Metrics sample pattern:
+    - Configure OpenTelemetry in ServiceDefaults (see ServiceDefaults section)
+    - Add Prometheus for metrics collection:
+      ```csharp
+      var prometheus = builder.AddContainer("prometheus", "prom/prometheus", "v3.2.1")
+          .WithBindMount("../prometheus", "/etc/prometheus", isReadOnly: true)
+          .WithArgs("--web.enable-otlp-receiver", "--config.file=/etc/prometheus/prometheus.yml")
+          .WithHttpEndpoint(targetPort: 9090)
+          .WithUrlForEndpoint("http", u => u.DisplayText = "Prometheus Dashboard");
+      ```
+    - Add Grafana for visualization:
+      ```csharp
+      var grafana = builder.AddContainer("grafana", "grafana/grafana")
+          .WithBindMount("../grafana/config", "/etc/grafana", isReadOnly: true)
+          .WithBindMount("../grafana/dashboards", "/var/lib/grafana/dashboards", isReadOnly: true)
+          .WithEnvironment("PROMETHEUS_ENDPOINT", prometheus.GetEndpoint("http"))
+          .WithHttpEndpoint(targetPort: 3000)
+          .WithUrlForEndpoint("http", u => u.DisplayText = "Grafana Dashboard");
+      ```
+    - Configure OpenTelemetry Collector:
+      ```csharp
+      builder.AddOpenTelemetryCollector("otelcollector", "../otelcollector/config.yaml")
+          .WithEnvironment("PROMETHEUS_ENDPOINT", 
+              $"{prometheus.GetEndpoint("http")}/api/v1/otlp");
+      ```
+    - Ensure all services use AddServiceDefaults for automatic instrumentation
+
+Service Discovery:
+  - Service discovery is automatically configured via ServiceDefaults
+  - Use WithReference to establish service dependencies:
+    ```csharp
+    var apiService = builder.AddProject<Projects.MyApp_ApiService>("apiservice");
+    var webFrontend = builder.AddProject<Projects.MyApp_Web>("webfrontend")
+        .WithReference(apiService);
+    ```
+  - Access services via configuration:
+    ```csharp
+    // Connection string is automatically injected
+    var connectionString = builder.Configuration.GetConnectionString("db1");
+    
+    // Service endpoint is automatically injected
+    var apiUrl = builder.Configuration["Services:apiservice"];
+    ```
+  - HttpClient automatically uses service discovery:
+    ```csharp
+    // HttpClient is configured with service discovery by default
+    var client = httpClientFactory.CreateClient("MyApiClient");
+    // Use service name instead of full URL
+    var response = await client.GetAsync("http://apiservice/weatherforecast");
+    ```
+
+Service Defaults Configuration:
+  - Always include these in ServiceDefaults:
+    - OpenTelemetry configuration (logging, metrics, tracing)
+    - Default health checks
+    - Service discovery
+    - HttpClient defaults with resilience and service discovery
+  - Filter health check endpoints from tracing:
+    ```csharp
+    .AddAspNetCoreInstrumentation(tracing =>
+        tracing.Filter = httpContext =>
+            !(httpContext.Request.Path.StartsWithSegments(HealthEndpointPath)
+              || httpContext.Request.Path.StartsWithSegments(AlivenessEndpointPath))
+    )
+    ```
+
+Launch Profiles:
+  - Configure launch profiles in AppHost Properties/launchSettings.json:
+    ```json
+    {
+      "profiles": {
+        "http": {
+          "commandName": "Project",
+          "dotnetRunMessages": true,
+          "launchBrowser": true,
+          "applicationUrl": "http://localhost:15000"
+        }
+      }
+    }
+    ```
+  - Use WithHostPort for specific port assignments:
+    ```csharp
+    if (builder.ExecutionContext.IsRunMode)
+    {
+        healthChecksUI.WithHostPort(7230);
+    }
+    ```
+
+Testing:
+  - Follow Aspire testing patterns:
+    - Use AppHost in tests:
+      ```csharp
+      public class MyAppTests : IClassFixture<DistributedApplicationFactory<Projects.MyApp_AppHost>>
+      {
+          private readonly DistributedApplicationFactory<Projects.MyApp_AppHost> _factory;
+      
+          public MyAppTests(DistributedApplicationFactory<Projects.MyApp_AppHost> factory)
+          {
+              _factory = factory;
+          }
+      
+          [Fact]
+          public async Task TestApiService()
+          {
+              await using var app = _factory.CreateAsync();
+              var apiService = app.GetResource<IProjectResource>("apiservice");
+              var client = app.CreateHttpClient("apiservice");
+              
+              var response = await client.GetAsync("/weatherforecast");
+              response.EnsureSuccessStatusCode();
+          }
+      }
+      ```
+    - Access resources in tests:
+      ```csharp
+      await using var app = _factory.CreateAsync();
+      var db = app.GetResource<PostgresServerResource>("postgres");
+      var connectionString = await db.GetConnectionStringAsync();
+      ```
+    - Use xUnit for testing framework
+    - Reference the Aspire testing documentation for detailed patterns
+
+Resource Dependencies:
+  - Always define explicit dependencies:
+    ```csharp
+    var cache = builder.AddRedis("cache");
+    var apiService = builder.AddProject<Projects.MyApp_ApiService>("apiservice")
+        .WithReference(cache)
+        .WaitFor(cache);
+    ```
+  - Use WaitFor for startup ordering:
+    ```csharp
+    .WaitFor(resource)  // Wait for resource to be ready
+    .WaitForCompletion(service)  // Wait for service to complete (e.g., migrations)
+    ```
+  - Order resources by dependency:
+    1. Infrastructure (databases, caches, message queues)
+    2. Migration services
+    3. Application services
+    4. Frontend applications
+
+Resource Configuration:
+  - Use environment variables for configuration:
+    ```csharp
+    .WithEnvironment("KEY", "VALUE")
+    .WithEnvironment("PROMETHEUS_ENDPOINT", prometheus.GetEndpoint("http"))
+    ```
+  - Use connection strings for databases:
+    ```csharp
+    var db1 = sqlserver.AddDatabase("db1");
+    // Connection string automatically injected as "ConnectionStrings:db1"
+    ```
+  - Configure endpoints:
+    ```csharp
+    .WithHttpEndpoint(targetPort: 9090)
+    .WithExternalHttpEndpoints()  // Expose to host network
+    ```
+
+Resource Lifecycle:
+  - Use ContainerLifetime for persistent resources:
+    ```csharp
+    var sqlserver = builder.AddSqlServer("sqlserver")
+        .WithDataVolume()
+        .WithLifetime(ContainerLifetime.Persistent);
+    ```
+  - Default lifetime is ContainerLifetime.Scoped (removed on shutdown)
+
+Best Practices:
+  - Always use ServiceDefaults for consistent configuration
+  - Define resources in dependency order in AppHost
+  - Use explicit WaitFor for startup ordering
+  - Implement health checks for all services
+  - Configure OpenTelemetry for observability
+  - Use WithReference for service dependencies
+  - Separate migration services from application services
+  - Use friendly URLs for better dashboard experience:
+    ```csharp
+    .WithFriendlyUrls(displayText: "API Service")
+    .WithUrlForEndpoint("https", u => u.DisplayText = "Instrumented App")
+    ```
+  - Filter health check endpoints from tracing to reduce noise
+  - Use WithExternalHttpEndpoints only when necessary (security consideration)
+  - Always call MapDefaultEndpoints in service Program.cs
+  - Use proper resource naming (lowercase, no spaces)
+
+Anti-patterns:
+  - Avoid: Hardcoding connection strings in code
+    ```csharp
+    // Bad
+    var connectionString = "Server=localhost;Database=mydb;...";
+    
+    // Good
+    var connectionString = builder.Configuration.GetConnectionString("db1");
+    ```
+  - Avoid: Not using WaitFor for dependencies
+    ```csharp
+    // Bad - service may start before database is ready
+    builder.AddProject<Projects.MyApp_ApiService>("api")
+        .WithReference(db1);
+    
+    // Good - explicit ordering
+    builder.AddProject<Projects.MyApp_ApiService>("api")
+        .WithReference(db1)
+        .WaitFor(db1);
+    ```
+  - Avoid: Not using ServiceDefaults
+    ```csharp
+    // Bad - missing observability and service discovery
+    var builder = WebApplication.CreateBuilder(args);
+    
+    // Good
+    var builder = WebApplication.CreateBuilder(args);
+    builder.AddServiceDefaults();
+    ```
+  - Avoid: Exposing health checks in production without authentication
+  - Avoid: Not implementing health checks for services
+  - Avoid: Mixing migration logic with application services
+
+# End of Cursor Rules File
